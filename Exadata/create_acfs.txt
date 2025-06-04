@@ -23,7 +23,6 @@ Diskgroup Name: DATA
 	 Mountpath: 
  
 ASMCMD> exit
-
 [grid@dbdense ~]$ logout
 
 [root@dbdense ~]# mkfs -t acfs /dev/asm/workvol-362
