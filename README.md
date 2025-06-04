@@ -7,6 +7,10 @@ This repository contains scripts for DBA operations on Oracle database. The foll
 - <B>Create ACFS FS on Exadata</B>: procedure to create acfs filesystem in Exadata / ExaDB-D
 - <B>ExaDB-S Manual Backup using dbaascli </B>: procedure to perform manual backup using dbaascli
 
+## Parsing Demo
+- Compile .java programs and run them directly, without passing parameters. You need ojdbc8.jar to access an Oracle database [you can change the lib to another one to access any other database technology].
+- It works with any version of Java.
+
 ## RAT
 - <B>Run SPA</B>: it compares performance of SQLs on source and target
 - <B>Run DB Replay</B>:it compares performance of workloads on source and target
@@ -19,4 +23,6 @@ This repository contains scripts for DBA operations on Oracle database. The foll
 
 ## TrueCache
 - <B>Configuring TrueCache instance</B>: procedure to install and configure a single TrueCache on BaseDB Service.
+
+
 
