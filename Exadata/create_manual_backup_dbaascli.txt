@@ -1,0 +1,34 @@
+
+Manual backups using dbaascli (Exadata Database Service):
+
+All commands using root.
+
+1) Create bucket on OSS
+2) Disable automatic backup on OCI console  (you have to configure static route manually if auto backup was never set for this database -- check ExaDB-S documentation)
+3) Update tooling on DomU: dbaascli admin updateStack --version LATEST
+4) Get config file:  dbaascli database backup --dbName myTestDB --getConfig --configFile /tmp/configfile.cfg
+5) Change the parameters you need, in special:
+
+    bkup_disk=no
+    bkup_oss=yes
+    bkup_oss_url=https://swiftobjectstorage.[region].oraclecloud.com/v1/[OSS namespace]/[bucket name]
+    bkup_oss_user=<oci_user_name>  -- if federated, consider the full username including identify provider string
+    bkup_oss_passwd=<password> -- this is user auth token, not user password (plain text, no single quotes)
+    bkup_oss_recovery_window=7
+
+6) dbaascli database backup --dbName myTestDB --configure --configFile /tmp/configfile.cfg
+7) check status: dbaascli database backup --dbName myTestDB --status --uuid [uuid in previous step] 
+8) test: dbaascli database backup --dbName myTestDB --start
+9) check status: dbaascli database backup --dbName myTestDB --status --uuid [uuid in previous step] 
+
+
+
+Test connectivy before step 6 from DomU:
+
+curl -v -X HEAD -u [user]:'[pass]' https://swiftobjectstorage.[region].oraclecloud.com/v1/[OSS namespace]/[bucket]
+
+
+
+
+MOS Note: 2708469.1 (note bkp_api was replaced by dbaascli)
+Documentation: https://docs.oracle.com/en/engineered-systems/exadata-cloud-at-customer/ecccm/ecc-using-dbaascli.html#GUID-6CB05C46-9D33-44EE-BAB1-6D676CBBBA4A

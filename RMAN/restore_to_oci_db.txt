@@ -1,0 +1,140 @@
+
+Language: PT-BR
+
+########################## Pre-Requerimentos
+
+- Backup RMAN com controlfile incluído (disponível por FSS)
+- PFILE da origem (deve revisar e sincronizar os relevantes parâmetros da origem e destino)
+- Atentar-se ao Release Update do destino (aplicar datapatch após o recover se a origem for inferior) e one-off patches
+
+########################## Passo 1 - criar o banco pela API
+
+1.1 Cria um ORACLE HOME com a mesma versão e release do banco de origem
+1.2 Cria o banco de dados com o mesmo DB_NAME do banco de origem
+
+########################## Passo 2 - preparar a remoção do banco criado pela API e colocar no lugar o banco a ser restaurado
+
+- fazer uma cópia das configurações do banco
+srvctl config database -d [db_unique_name] > db_unique_name.config
+
+- Gerar script para remover arquivos (use o sqlplus):
+set heading off linesize 999 pagesize 0 feedback off trimspool on 
+spool /tmp/asm_files.sql
+select 'asmcmd rm '||name from v$datafile union all  select 'asmcmd rm '||name from v$tempfile union all select 'asmcmd rm '||member from v$logfile; 
+spool off 
+
+create pfile='/tmp/db_unique_name.pfile' from spfile;  
+
+- Parar o serviço:
+srvctl stop database -d [db_unique_name] -o immediate 
+
+########################## Passo 3 - executar a remoção
+
+- Conectar como opc e fazer sudo para grid:
+$sudo su grid
+
+Edit /tmp/asm_files.sql para remover qualquer linha indesejada 
+
+Salva e executa o script:
+
+[grid@<host> ~]$ . /tmp/files.lst 
+
+conectar com asmcmd e remover spfile
+
+########################## Passo 4 (apenas se a origem usar TDE)
+
+Copiar ewallet.p12 e cwallet.sso da origem para o diretório abaixo:
+
+Remove old wallet files in /opt/oracle/dcs/commonstore/wallets/$ORACLE_UNQNAME/tde
+
+$ chmod 777 /tmp/ewallet.p12 
+$ chmod 777 /tmp/cwallet.sso 
+$ sudo su – oracle 
+$ cp /tmp/ewallet.p12 /opt/oracle/dcs/commonstore/wallets/tde/$ORACLE_UNQNAME 
+$ cp /tmp/cwallet.sso /opt/oracle/dcs/commonstore/wallets/tde/$ORACLE_UNQNAME 
+$ chmod 600 /opt/oracle/dcs/commonstore/wallets/tde/$ORACLE_UNQNAME/ewallet.p12
+$ chmod 600 /opt/oracle/dcs/commonstore/wallets/tde/$ORACLE_UNQNAME/cwallet.sso
+
+
+########################## Passo 5 - Fazer o restore a partir de um filesystem (FSS):
+Editar /tmp/db_unique_name.pfile com base no pfile da origem (alterar parametros relevantes da origem que estão diferentes no pfile do Exa
+- obs: não alterar parâmetros que informam destino de arquivos, ex: *_dest).
+
+$ rman TARGET /
+RMAN> SHUTDOWN IMMEDIATE;
+RMAN> STARTUP NOMOUNT PFILE='/tmp/db_unique_name.pfile'; 
+
+
+sqlplus:
+
+CREATE SPFILE='+DATA' FROM PFILE;
+SHUTDOWN IMMEDIATE
+
+Certifique-se que o serviço está usando o SPFILE correto:
+srvctl config database -d [db_unique_name]
+
+Use o asmcmd para ver se o caminho/arquivo do spfile está correto na cima do srvct acima.
+Se não estiver, aponte o arquivo do spfile no serviço:
+
+srvctl modify database -d [db_unique_name] -spfile +DATA/caminho/arquivo
+
+
+STARTUP NOMOUNT
+
+
+rman target /
+
+RUN 
+{
+  ALLOCATE CHANNEL c1 FOR DEVICE TYPE DISK TO '[mount point FSS]/%F';
+  RESTORE CONTROLFILE FROM AUTOBACKUP;
+  ALTER DATABASE MOUNT;
+}
+
+ou ---> RMAN> restore controlfile from '[mount point FSS]arquivo_backup_rman';
+   ---> RMAN> alter database mount;
+
+catalog start with '[mount point FSS]nome_arquivo_backup_' noprompt;
+
+
+RUN {
+  SET UNTIL SEQUENCE xx THREAD XX;
+  SET NEWNAME FOR DATABASE TO '+DATA';
+  RESTORE DATABASE;
+  SWITCH DATAFILE ALL;
+  RECOVER DATABASE;
+}
+
+select member from v$logfile;
+
+alter database rename file '[member da v$logfile]' to '+RECO'; -- para cada redo log
+
+
+ALTER DATABASE OPEN RESETLOGS;
+
+
+srvctl stop database -d [db_unique_name]
+srvctl start database -d [db_unique_name]
+
+
+########################## Passo 6: adicionar nó 2 se origem é single instance
+
+create undo tablespace undotbs2 datafile '+DATA';
+alter database add logfile thread 2 group xx size xxx;
+alter database add logfile thread 2 group yy size xxx;
+
+alter system set instance_number = 2      scope=spfile sid='xxx2';
+alter system set instance_name = 'xxx2'   scope=spfile sid='xxx2';
+alter system set thread = 2               scope=spfile sid='xxx2';
+alter system set undo_tablespace=undotbs2 scope=spfile sid='xxx2';
+alter database enable thread 2;
+
+copiar password file do nó 1 para o 2
+
+$srvctl start instance -d [db_unique_name] -i xxx2
+
+-----
+
+########################## Passo 7: adicionar serviços adicionais para aplicação
+
+srvctl add service -db [db_unique_name] -service [nome servico] -pdb xxxx -role [primary | physical_standby]

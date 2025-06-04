@@ -1,0 +1,261 @@
+
+This procedure is based on 19c database version.
+
+OFFICIAL DOCUMENTATION: https://docs.oracle.com/en/database/oracle/oracle-database/19/shard/sharding-overview.html#GUID-0F39B1FB-DCF9-4C8A-A2EA-88705B90C5BF
+
+YOU SHOULD FOLLOW OFFICIAL DOCUMENTATION. The procedure in this script is only for testing purposes, but you can use it as a baseline to create a 
+production setup.
+
+Please read the documentation first before running these setups in order to understand the Oracle Sharding concepts.
+
+The following Oracle DB Sharding installation is based on System-Managed method, where table rows are distributed by a hash primary key in the shards, 
+such as customer id for example. The Shards and Catalog databases were created using DBCS VMs. Not a problem if you do the same using IaaS. 
+
+For adding new shards, if using IaaS, you could create a custom image of on IaaS to represent a gold image for the shards. For DBCS shards, you would have 
+to have a configured dummy instance to always create a new shard from -- or create a new one from scratch and run a script to configure it properly to
+make it similar to the other shards (db params, TDE configs, etc).
+
+The topology considers the following:
+
+- 1x Director server (or gsm) deployed on a Compute Instance VM (linux)
+- 1x Catalog 19c database server on a DBCS VM (single instance)
+- 2x Shard 19c database servers on DBCS VMs (single instance)
+
+###### Pre-requirements #################################################
+
+1. Director VM server was deployed using Oracle provided images (Oracle Database image - which has all the OS requirements. Database on this 
+VM can be removed).
+
+2. DBCS VM for catalog was created first, and DBCS VMs for shards were cloned from the catalog, using different db names and different hostnames. 
+Shards were cloned because shards must have the same TDE keys (you can also run the procedures on the docs to export/import TDE keys across shard 
+servers instead of cloning, but having a gold image as a baseline is good for assuring every shard has the same setup.
+
+In this example, I used the following database and PDB names:
+
+catalog: sdbcat
+shard 1: sdbsh1
+shard 2: sdbsh2
+pdb: SDBPDB (as CDB was cloned from the catalog, all PDBs have the same name)
+
+
+3. Disable firewall on all servers (connected as root) -- director, shards and catalog -- or configure security settings properly:
+
+systemctl stop firewalld
+systemctl disable firewalld 
+systemctl stop iptables
+systemctl disable iptables 
+
+4. Include all the private ips on /etc/hosts of all the hosts (with the complete and short host names specified in the file):
+
+10.2.1.61    gsm-server.subnet.vcn.oraclevcn.com gsm-server
+10.2.1.173   mlcatalog.subnet.vcn.oraclevcn.com mlcatalog
+10.2.1.139   mlsh01.subnet.vcn.oraclevcn.com mlsh01
+10.2.1.92    mlsh02.subnet.vcn.oraclevcn.com mlsh02   
+
+Note: be sure that security lists allows the communication for all the ports within the VCN or for a specific CIDR, or check the docs the ports 
+you need to allow.
+
+5. Modify local_listener parameter on catalog instance using the format host:port:
+
+alter system set local_listener = 'mlcatalog.subnet.vcn.oraclevcn.com:1521' scope=spfile;
+
+6. Modify the following database parameters on all databases (shards and catalog):
+
+sqlplus / as sysdba
+
+alter system set global_names            = false scope=spfile;
+alter system set db_files                = 1024  scope=spfile;
+alter system set open_links              = 200   scope=spfile;
+alter system set open_links_per_instance = 200   scope=spfile;
+alter system set shared_servers          = 20    scope=spfile;
+alter system set dg_broker_start         = true  scope=spfile;
+
+alter database flashback on;
+alter database force logging;
+
+shutdown immediate
+startup
+
+Note: some parameters are over-estimated. You should know how many shards and chunks you would need to set open links and db files
+parameters (read the docs).
+
+7. Comment SQLNET network encryption entries on sqlnet.ora file on the catalog server (if you dont need network encryption), and all tnsnames 
+(shards and catalog) should have entries for all the database CDBs. You should configure network encryption on gsm server if you want it to be configured
+(it`s default on DBCS VM databases).
+
+### Director server (gsm) ##################
+
+Note: you should have at least 16G for swap in the server. Check it before starting the installation.
+
+Note: configure ORA_INVENTORY, ORACLE_BASE and ORACLE_HOME env variables, and add $ORACLE_HOME/bin to $PATH
+
+1 - Install GSM 19c from edelivery (global service manager), and unzip it on /tmp
+2 - update response/gsm_install.rsp file with the proper system variables
+3 - run: ./runInstaller -silent -responseFile /path/response/gsm_install.rsp -showProgress -ignorePrereq
+4 - run root.sh
+
+### Shard Catalog ##################
+
+sqlplus / as sysdba
+
+alter user gsmcatuser account unlock;
+alter user gsmcatuser identified by "password";
+
+alter session set container = SDBPDB;
+alter user gsmcatuser account unlock;
+create user mysdbadmin identified by "password";
+grant gsmadmin_role to mysdbadmin;
+
+### SHARD PREPARATION
+
+$ sqlplus / as sysdba
+alter user gsmrootuser account unlock;
+alter user gsmrootuser identified by "password";
+grant SYSDG, SYSBACKUP to gsmrootuser;
+alter user gsmuser account unlock;
+alter user gsmuser identified by "password";
+
+alter session set container=SDBPDB;
+alter user gsmuser account unlock;
+grant SYSDG, SYSBACKUP to gsmuser;
+grant read, write on directory DATA_PUMP_DIR to gsmadmin_internal;
+
+set serveroutput on
+execute dbms_gsm_fix.validateShard
+
+It should not report any issues, unless db file convert (used for data guard, not in our case here)
+
+Repeat the process for all the remaining shards
+
+
+### CONFIGURE SHARD DATABASE TOPOLOGY (System-managed deployment) #######################################
+
+Using 6 chunks in this example:
+
+$ gdsctl
+
+-- create the shard catalog
+create shardcatalog -database mlcatalog.subnet.vcn.oraclevcn.com:1521/SDBPDB.subnet.vcn.oraclevcn.com -user mysdbadmin/password -chunks 6
+
+(obs: if you did not configure network encryption between the catalog and gsm server you may get ORA-12650 here, disable network encryption on 
+the catalog sqlnet.ora, or enable it on gsm server -- DBCS VMs have this feature enabled by default)
+
+-- connect to mysdbadmin, add and start gsm
+connect mysdbadmin/password@mlcatalog.subnet.vcn.oraclevcn.com:1521/SDBPDB.subnet.vcn.oraclevcn.com
+add gsm -gsm sharddirector1 -catalog mlcatalog.subnet.vcn.oraclevcn.com:1521/SDBPDB.subnet.vcn.oraclevcn.com -pwd password
+start gsm -gsm sharddirector1
+
+-- add shard cdbs
+add cdb -connect mlsh01.subnet.vcn.oraclevcn.com:1521/sdbsh1_iad12k.subnet.vcn.oraclevcn.com -pwd password
+add cdb -connect mlsh02.subnet.vcn.oraclevcn.com:1521/sdbsh2_iad1zq.subnet.vcn.oraclevcn.com -pwd password
+
+-- add shard pdbs
+add shard -connect mlsh01.subnet.vcn.oraclevcn.com:1521/SDBPDB.subnet.vcn.oraclevcn.com -pwd password -cdb sdbsh1_iad12k 
+add shard -connect mlsh02.subnet.vcn.oraclevcn.com:1521/SDBPDB.subnet.vcn.oraclevcn.com -pwd password -cdb sdbsh2_iad1zq 
+
+-- deploy the sharding topology
+deploy
+
+Note: config shard should return OK and ONLINE in the availability field (not PENDING).
+
+If you dont have the status above, run status, go the gsm log.xml file and try to understand the issue.
+
+Possible issues:
+
+- rejected registration: you should check if all the ips are registered in the output of "config vncr" command. 
+- certify global_names is set to false and you REBOOTED THE INSTANCES after changed it to false.
+- certify /etc/hosts are correct in all the hosts (DBCS VM clone may add additional entries that are not correct, validate).
+- connect to the catalog and shards CDB as sys and run 'alter system register'.
+- certify firewall is disabled in the servers, or the ports needed for the service are open.
+- stop and start gsm service (stop gsm -gsm sharddirector1)
+
+if you are ok, continue in the gdsctl command line:
+
+-- add the application service (read/write since we dont have standbys in this config)
+add service -service oltp_rw_srvc -role primary
+start service -service oltp_rw_srvc
+
+
+##### Database Schema Design #########################
+
+
+-- connect to shard catalog and create the application schema
+
+$ sqlplus / as sysdba
+
+alter session set container=SDBPDB;
+alter session enable shard ddl;
+create user app_schema identified by "password";
+grant all privileges to app_schema;
+grant gsmadmin_role to app_schema;
+grant select_catalog_role to app_schema;
+grant connect, resource to app_schema;
+grant dba to app_schema;
+grant execute on dbms_crypto to app_schema;
+grant create view to app_schema; 
+grant create database link to app_schema;
+grant alter database link to app_schema;
+grant create materialized view to app_schema;
+grant create tablespace to app_schema;
+
+
+CREATE TABLESPACE SET TSP_SET_1 using template
+ (datafile size 50m autoextend on next 5M maxsize unlimited
+  extent management local segment space management auto);
+
+CREATE TABLESPACE products_tsp datafile size 100m
+ autoextend on next 50M maxsize unlimited
+ extent management local uniform size 1m; 
+
+CONNECT app_schema/"password"@mlcatalog.subnet.vcn.oraclevcn.com:1521/SDBPDB.subnet.vcn.oraclevcn.com
+alter session enable shard ddl;
+
+CREATE SHARDED TABLE Customers 
+( CustNo      NUMBER NOT NULL
+, Name        VARCHAR2(50)
+, Address     VARCHAR2(250) 
+, CONSTRAINT Root1PK PRIMARY KEY(CustNo)
+)
+PARTITION BY CONSISTENT HASH (CustNo)
+PARTITIONS AUTO
+TABLESPACE SET TSP_SET_1
+;
+
+CREATE SHARDED TABLE Orders 
+( OrderNo   NUMBER NOT NULL
+, CustNo    NUMBER NOT NULL
+, OrderDate DATE
+, CONSTRAINT OrderPK PRIMARY KEY (CustNo, OrderNo)
+, CONSTRAINT CustFK  FOREIGN KEY (CustNo) REFERENCES Customers(CustNo) ON DELETE CASCADE
+)
+PARTITION BY REFERENCE (CustFK)
+;
+
+CREATE SHARDED TABLE LineItems 
+( CustNo    NUMBER NOT NULL
+, LineNo    NUMBER(2) NOT NULL
+, OrderNo   NUMBER(5) NOT NULL
+, StockNo   NUMBER(4) NOT NULL
+, Quantity  NUMBER(2)
+, CONSTRAINT LinePK  PRIMARY KEY (CustNo, OrderNo, LineNo)
+, CONSTRAINT LineFK  FOREIGN KEY (CustNo, OrderNo) REFERENCES Orders(CustNo, OrderNo) ON DELETE CASCADE
+)
+PARTITION BY REFERENCE (LineFK)
+;
+
+CREATE DUPLICATED TABLE Products
+( StockNo     NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY
+, Description VARCHAR2(20)
+, Price       NUMBER(6,2)) TABLESPACE products_tsp;
+
+
+Connections using Direct Routing: use gsm/director endpoint (ip address/hostname) and pass the sharding key and app database service (oltp_rw_srvc in this example)
+Connections using Proxy Routing: use gsm/director endpoint (ip address/hostname) and connect to the catalog service (gds$catalog)
+
+-- connect to the catalog (proxy routing for multi-shard query) example
+CONNECT app_schema/"password"@gsm-server.subnet.vcn.oraclevcn.com:1522/GDS$CATALOG.oradbcloud
+
+-- connect to the gsm using sharding key (direct routing) example
+connect app_schema/"password"@'(description=(address=(protocol=tcp)(host=gsm-server.subnet.vcn.oraclevcn.com)(port=1522))(connect_data=(service_name=oltp_rw_srvc.orasdb.oradbcloud)(region=regionora)(SHARDING_KEY=1)))'
+
+

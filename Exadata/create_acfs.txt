@@ -1,0 +1,52 @@
+Create ACFS filesystem on Exadata Database Service:
+----------------------------------------------------
+
+[grid@dbdense ~]$ asmcmd
+
+ASMCMD> lsdg
+State    Type    Rebal  Sector  Block       AU  Total_MB   Free_MB  Req_mir_free_MB  Usable_file_MB  Offline_disks  Voting_files  Name
+MOUNTED  NORMAL  N         512   4096  4194304  21976992  21958912          2441888         9758512              0             Y  DATA/
+MOUNTED  NORMAL  N         512   4096  4194304   5494212   5486468           610468         2438000              0             N  RECO/
+ASMCMD> volcreate -G DATA -s 1024G workvol
+ASMCMD> volinfo -G DATA workvol
+Diskgroup Name: DATA
+
+	 Volume Name: WORKVOL
+	 Volume Device: /dev/asm/workvol-362
+	 State: ENABLED
+	 Size (MB): 1048576
+	 Resize Unit (MB): 64
+	 Redundancy: MIRROR
+	 Stripe Columns: 8
+	 Stripe Width (K): 1024
+	 Usage: 
+	 Mountpath: 
+ 
+ASMCMD> exit
+
+[grid@dbdense ~]$ logout
+
+[root@dbdense ~]# mkfs -t acfs /dev/asm/workvol-362
+mkfs.acfs: version                   = 12.1.0.2.0
+mkfs.acfs: on-disk version           = 39.0
+mkfs.acfs: volume                    = /dev/asm/workvol-362
+mkfs.acfs: volume size               = 1099511627776  (   1.00 TB )
+mkfs.acfs: Format complete.
+
+[root@dbdense ~]# /u01/app/12.1.0.2/grid/bin/srvctl add filesystem -d /dev/asm/workvol-362 -g DATA -v workvol -m /scratch/workvol -u oracle
+[root@dbdense ~]# /u01/app/12.1.0.2/grid/bin/srvctl start filesystem -d /dev/asm/workvol-362
+
+[root@dbdense ~]# df -h
+Filesystem            Size  Used Avail Use% Mounted on
+/dev/mapper/VolGroupSys-LogVolRoot
+                      148G   16G  125G  12% /
+tmpfs                 252G  631M  252G   1% /dev/shm
+/dev/sda2             1.4G   52M  1.2G   5% /boot
+/dev/sda1             486M  272K  485M   1% /boot/efi
+/dev/mapper/VolGroupSys-LogVolU01
+                      128G   24G   99G  20% /u01
+/dev/asm/commonstore-362
+                      5.0G  113M  4.9G   3% /opt/oracle/dcs/commonstore
+/dev/asm/workvol-362  1.0T  2.1G 1022G   1% /scratch/workvol
+
+[root@dbdense ~]# cd /scratch/workvol/
