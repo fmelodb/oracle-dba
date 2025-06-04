@@ -1,0 +1,16 @@
+cluster_database=FALSE
+db_create_file_dest=/u02/app/oracle/oradata/demodb_gru/
+db_domain=dbvcn.oraclevcn.com
+db_name=DEMODB
+db_recovery_file_dest=/u03/app/oracle/fast_recovery_area
+db_unique_name=demodb_gru
+enable_pluggable_database=TRUE
+instance_name=demodb
+global_names=TRUE
+log_archive_dest_2=service=, "tcdb1", LGWR ASYNC NET_TIMEOUT=30 VALID_FOR=(ONLINE_LOGFILE,PRIMARY_ROLE) DB_UNIQUE_NAME="tcdb1_gru" REOPEN=15 MAX_FAILURE=20 ROLE="TRUE_CACHE"
+processes=200
+remote_login_passwordfile=EXCLUSIVE
+sga_target=6979321856
+tde_configuration=keystore_configuration=FILE
+wallet_root=/opt/oracle/dcs/commonstore/wallets/demodb_gru
+listener_networks='((NAME=NET2)(LOCAL_LISTENER=demodb.dbvcn.oraclevcn.com:1521)(REMOTE_LISTENER=truecache1.oraclevcn.com:1521))'

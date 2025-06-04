@@ -1,0 +1,61 @@
+# True Cache network name
+
+tcdb1 =
+  (DESCRIPTION =
+    (ADDRESS_LIST =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = truecache1.dbvcn.oraclevcn.com)(PORT = 1521))
+    )
+    (CONNECT_DATA =
+      (SID = tcdb1)
+    )
+  )
+
+
+# True Cache database application service name
+
+sales_tc =
+  (DESCRIPTION =
+    (ADDRESS_LIST =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = truecache1.dbvcn.oraclevcn.com)(PORT = 1521))
+    )
+    (CONNECT_DATA =
+      (SERVICE_NAME = sales_tc.dbvcn.oraclevcn.com)
+    )
+  )
+
+
+# Primary database network name
+demodb =
+  (DESCRIPTION =
+    (ADDRESS_LIST =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = demodb.dbvcn.oraclevcn.com)(PORT = 1521))
+    )
+    (CONNECT_DATA =
+      (SID = demodb)
+    )
+  )
+
+
+# Primary database application service name
+
+sales =
+  (DESCRIPTION =
+    (ADDRESS_LIST =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = demodb.dbvcn.oraclevcn.com)(PORT = 1521))
+    )
+    (CONNECT_DATA =
+      (SERVICE_NAME = sales.dbvcn.oraclevcn.com)
+    )
+  )
+
+
+listener_demodb =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = demodb.dbvcn.oraclevcn.com)(PORT=1521))
+  )
+
+
+listener_tcdb1 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = truecache1.dbvcn.oraclevcn.com)(PORT=1521))
+  )
